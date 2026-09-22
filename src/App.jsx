@@ -134,8 +134,9 @@ function App() {
     <main className="app-shell">
       <header className="page-header">
         <p className="eyebrow">Literacy tutoring · Sample-data prototype</p>
-        <h1>Tutor Session Reporting</h1>
-        <p>Track tutoring time and celebrate student achievements.</p>
+        <h1>LVAEP Tutor Session Reporting</h1>
+        <p>Track tutoring time and celebrate student achievements. <p>
+        </p>Choose the active tutor, add or select a student, record sessions or achievements, then use the monthly report to review activity.</p>
         <p className="prototype-note">Use fictional students and sample information only.</p>
       </header>
 

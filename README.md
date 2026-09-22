@@ -2,12 +2,20 @@
 
 A sample-data prototype for a nonprofit literacy tutoring workflow. It replaces paper monthly attendance reports with saved sessions, totals, and a separate record of attained student goals.
 
+## Live Demo
+
+[View the deployed app] https://tutor-session-reporting-css-khushi.vercel.app
+
 ## Features
 
-- Add fictional students with trimmed names and duplicate checks; one shared roster updates both forms immediately. No preloaded roster on an empty database.
+- Add fictional students with trimmed names and duplicate checks; one shared roster updates both forms immediately. The deployed demo includes fictional sample students, and additional students can be added through the app.
+
 - Supabase-backed student records and tutoring sessions that survive refreshes.
+
 - Month/year filters, total hours, session history, and per-student hours.
+
 - The LVAEP FY 2026–2027 form’s 17 goals in a grouped checklist, including the original asterisks, plus an optional Other(s) entry. Multiple achievements save together; attained goals are marked and disabled.
+
 - Required fields, positive numeric hours, save feedback, loading/error states, and responsive accessible forms.
 
 ## Stack and structure
@@ -15,48 +23,73 @@ A sample-data prototype for a nonprofit literacy tutoring workflow. It replaces 
 React + JavaScript, Vite, plain CSS, and Supabase/PostgreSQL. No UI framework or extra backend.
 
 - `src/App.jsx`: data loading, session form, monthly report.
+
 - `src/AddStudent.jsx`: student entry and save feedback.
+
 - `src/Achievements.jsx`: grouped achievement checklist and selected-student history.
+
 - `src/reporting.js`: shared date/session validation, duplicate-text normalization, and the exact goal catalog.
+
 - `src/supabaseClient.js`: shared client using Vite environment variables.
+
 - `src/App.css` / `src/index.css`: page and shared styles.
+
 - `supabase/migrations/001_students_and_achievements.sql`: initial relationship migration.
+
 - `supabase/migrations/002_student_entry_and_achievement_duplicates.sql`: student insert access and duplicate indexes.
 
 ## Local setup
 
 1. Use a current Node.js version supported by Vite 8 (Node 22.12+ recommended).
+
 2. Run `npm ci`.
+
 3. Copy `.env.example` to `.env` and supply your own Supabase project values:
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_PUBLISHABLE_KEY`
-4. Complete the database migration below before using this version.
+
+- `VITE_SUPABASE_URL`
+
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+
+4. For a new Supabase project, run the database migrations described below before using this version. The deployed demo database has already been migrated.
+
 5. Run `npm run dev` and open the URL printed by Vite. Restart Vite after changing environment variables.
 
 `.env` and its variants are ignored; `.env.example` contains names only. Never put database passwords or service-role/secret keys in frontend variables. Vite exposes `VITE_` values in browser builds; use only the publishable key here.
 
-## Database migration — manual action required
+## Database setup and migrations
 
-The remote database has **not** been migrated by this code change. Export/back up existing records first. In Supabase SQL Editor:
+The deployed demo database has already been migrated and contains fictional sample students, tutors, sessions, and achievements so reviewers can immediately explore the reporting workflow.
 
-- If migration `001` has already been applied (the students/achievements tables exist), run **only `002_student_entry_and_achievement_duplicates.sql`** once.
-- If you still have the original sessions-only schema, run `001_students_and_achievements.sql`, then `002_student_entry_and_achievement_duplicates.sql`, once each.
-- Reload the app after SQL succeeds. Do not rerun `001` on the migrated database.
+For a new Supabase project, run the included migrations in order in the Supabase SQL Editor:
+
+- `001_students_and_achievements.sql`
+
+- `002_student_entry_and_achievement_duplicates.sql`
+
+- `003_tutor_attribution.sql`
+
+Run each migration once. If a project has already been partially migrated, inspect the existing schema before rerunning anything. Reload the app after the required SQL succeeds.
 
 Migration `002` adds anonymous INSERT permission for student names and unique indexes for normalized student names and each student/category/goal. Dates are intentionally excluded from achievement uniqueness. Existing duplicates cause a safe transaction rollback; inspection queries are included at the bottom of the file. Review conflicting records before retrying; nothing is silently removed or merged.
 
 The migration assumes an existing `public.sessions` table with `id`, `student` (text), `date`, and `hours`, and a working ID default. It creates new `students` and `achievements` tables; if those already exist, stop and reconcile the schema rather than rerunning blindly. The transaction rolls back on failure.
 
-It preserves session IDs, dates, and hours; creates students from distinct trimmed legacy names; and backfills a required `student_id` relationship. Blank legacy names get `Sample student (legacy)`. Confirm all existing names/data are fictional before migration. No rows or legacy name column are deleted. There are no explicit student seeds anymore: an empty sessions table produces an empty roster. Existing records, including previously seeded students, are preserved as requested; an existing populated database is not reset. Use Add New Student to build a new roster. The old `student` column becomes optional and is no longer read or written by the app. Existing names that differ only by surrounding whitespace are treated as the same student.
+Migration `001` preserves session IDs, dates, and hours; creates students from distinct trimmed legacy names; and backfills a required `student_id` relationship. Blank legacy names get `Sample student (legacy)`. No rows or legacy name column are deleted. The old `student` column becomes optional and is no longer read or written by the app. Existing names that differ only by surrounding whitespace are treated as the same student.
+
+The deployed demo intentionally contains fictional sample data so the main reporting features are visible immediately. The Add New Student workflow can be used to expand that roster. A brand-new database can still begin empty if no sample records are inserted.
 
 New session writes require positive hours; old zero-hour/invalid test rows are retained using a `NOT VALID` constraint. Invalid report records are excluded with a visible message. Zero-hour legacy records remain visible. If `created_at` did not exist, old rows receive the migration timestamp, not an invented historical creation time.
 
 After running, use the verification queries at the bottom of the SQL file, compare session counts with your backup, and test saving/reloading both record types. Keep the legacy `student` column until verification is complete. An older frontend that inserts only a student name will no longer work after migration because `student_id` is required; coordinate the migration and frontend update.
 
 | Table | Columns |
+
 | --- | --- |
+
 | `students` | UUID `id`, unique `name`, `created_at` |
+
 | `sessions` | Existing `id`, `student_id` → students, `date`, `hours`, `created_at`, retained legacy `student` |
+
 | `achievements` | UUID `id`, `student_id` → students, `category`, `goal`, `achieved_at`, `created_at` |
 
 ## Reporting and tradeoffs
@@ -80,28 +113,47 @@ Production requires authentication and role-based RLS to restrict tutors to auth
 ## Checks and Vercel setup
 
 ```sh
+
 npm run build
+
 npm run lint
+
 ```
 
 For Vercel, select the **Vite** framework preset, use `npm run build`, and set the output directory to `dist`. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in the Vercel project environment settings before building. Redeploy after changing them because Vite embeds them at build time. This single-page app has no custom routes requiring rewrite configuration. No deployment, commit, or push is performed by this change.
 
 ## Manual browser checklist
 
-- Run the applicable migrations, verify old row counts and readable student names, then open the app.
-- On a fresh empty database, confirm “No students added yet” appears and session/achievement forms are disabled while Add New Student remains usable.
+- Open the deployed demo and confirm the fictional sample students, sessions, achievements, and tutors load correctly.
+
+- Add another fictional student and confirm the new name appears in both dropdowns immediately and persists after refresh.
+
+- For a brand-new empty database, the app also supports an empty-roster state where Add New Student remains available while session/achievement recording waits for a student to be added.
+
 - Add a fictional student with surrounding spaces; confirm the trimmed name appears in both dropdowns immediately and persists after refresh.
+
 - Try a blank name and the same name with different capitalization/extra spaces; confirm helpful validation/duplicate feedback.
+
 - Save a session with a fictional student, date, and 1.25 hours. Confirm success and persistence after refresh.
+
 - Check blank fields and zero/negative hours cannot be submitted.
+
 - Try month-only, year-only, combined, and All filters; verify session count, totals, and per-student hours agree.
+
 - Select a period with no sessions; confirm zero totals and a helpful message.
+
 - Select a student/date, check goals in several categories, add Other text, and save. Confirm one history record per goal with the right category/date.
+
 - Confirm the student stays selected, Other clears, and saved goals become checked/disabled. Refresh and verify they remain attained.
+
 - Switch students and confirm their histories/checklists are independent.
+
 - Submit no new selections or only whitespace in Other; confirm an error. Test Other-only submission and a repeated Other goal.
+
 - In two tabs, try saving the same goal for the same student. Confirm the duplicate is rejected without partially saving the second batch.
+
 - Test a failed request (e.g. offline browser tools): confirm feedback and retained entries, then reconnect and refresh before retrying.
+
 - Navigate forms by keyboard and check a narrow mobile viewport for readable controls and no horizontal overflow.
 
 ## Future improvements
@@ -110,7 +162,7 @@ Authentication and role-based access, student edit/delete workflows, exports, pa
 
 ## Multiple tutors (migration 003)
 
-After migrations 001 and 002, run `supabase/migrations/003_tutor_attribution.sql` once in Supabase SQL Editor. This migration has not been run remotely by the app update. Do not rerun earlier migrations. Existing student, session, and achievement records are preserved.
+The deployed demo database already includes migration `003_tutor_attribution.sql`. For a new Supabase project, run it once after migrations 001 and 002. Existing student, session, and achievement records are preserved.
 
 The migration creates `tutors` (`id`, `name`, nullable unique `auth_user_id`, `created_at`) and adds nullable `tutor_id` foreign keys to sessions and achievements. Historical rows retain NULL attribution and display “Not assigned.” No tutor is guessed or backfilled. The achievement uniqueness rule remains per student/category/goal, across all tutors.
 
@@ -123,8 +175,13 @@ Anonymous clients may read only tutor IDs/names and must supply a tutor ID for n
 For future Supabase Auth, populate each tutor’s `auth_user_id` with the matching `auth.users.id`, derive the active tutor from the signed-in user, and replace anonymous policies with authenticated, role-based RLS. The session/achievement foreign keys can stay as they are. Auth is not implemented by this migration.
 
 Tutor testing checklist:
+
 - Add two fictional tutors and select each in turn; save a session and achievement for each, then refresh to verify attribution.
+
 - Confirm a tutor must be selected for new activity, while adding students and viewing reports still work without one.
+
 - Confirm switching tutors leaves monthly totals unchanged and old records remain visible as “Not assigned.”
+
 - Confirm a goal recorded by one tutor remains attained for that student when another tutor is selected.
+
 - Confirm tutor selection is disabled during saves and errors preserve form entries.
