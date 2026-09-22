@@ -1,9 +1,18 @@
 import './App.css'
 import { useState, useEffect } from 'react'
 import { supabase } from './supabaseClient'
+import Achievements from './Achievements'
+import AddStudent from './AddStudent'
+import { isValidDate, isValidSession } from './reporting'
+
+const months = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December']
+
+// Read the name through the foreign key, never from the legacy student column.
+const sessionFields = 'id, student_id, date, hours, learner:students!student_id(id, name)'
 
 function App() {
-  const[student, setStudent] = useState('')
+  const[studentId, setStudentId] = useState('')
   const[date, setDate] = useState('')
   const[hours, setHours] = useState('')
   const[sessions, setSessions] = useState([])
@@ -12,80 +21,72 @@ function App() {
   const[isLoading, setIsLoading] = useState(true)
   const[loadError, setLoadError] = useState('')
 
+  const [students, setStudents] = useState([])
+  const [achievements, setAchievements] = useState([])
+  const [isSaving, setIsSaving] = useState(false)
+  const [sessionMessage, setSessionMessage] = useState(null)
+
   useEffect(() => {
+    let cancelled = false
     async function fetchSessions() {
       try {
-        const {data, error} = await supabase
-          .from('sessions')
-          .select('*')
+        const studentResult = await supabase.from('students').select('*').order('name')
+        if (studentResult.error) throw studentResult.error
+        const sessionResult = await supabase.from('sessions').select(sessionFields).order('date', { ascending: false })
+        if (sessionResult.error) throw sessionResult.error
+        const achievementResult = await supabase.from('achievements').select('*')
+        if (achievementResult.error) throw achievementResult.error
 
-        if (error) {
-          throw error
+        if (!cancelled) {
+          setStudents(studentResult.data ?? [])
+          setSessions(sessionResult.data ?? [])
+          setAchievements(achievementResult.data ?? [])
         }
-        setSessions(data ?? [])
       } catch {
-        setLoadError('Could not load sessions. Please refresh the page to try again.')
+        if (!cancelled) setLoadError('Could not load reporting data. Check your connection and database setup, then refresh to try again.')
       } finally {
-        setIsLoading(false)
+        if (!cancelled) setIsLoading(false)
       }
 
     }
     fetchSessions()
+    return () => { cancelled = true }
   }, [])
 
-  async function recordSession() {
+  async function recordSession(event) {
+    event.preventDefault()
+    if (isSaving || isLoading || loadError) return
+    setSessionMessage(null)
+    const numericHours = Number(hours)
 
-    if (student === '' || date === '' || hours === '') {
-      alert('Please fill out every field!')
+    if (!students.some((student) => student.id === studentId) || !isValidDate(date) ||
+        !hours.trim() || !Number.isFinite(numericHours) || numericHours <= 0) {
+      setSessionMessage({ type: 'error', text: 'Select a student, enter a valid date, and enter hours greater than zero.' })
       return
     }
 
-    if (!Number.isFinite(Number(hours)) || Number(hours) < 0) {
-      alert('Please enter a valid number of hours, zero or greater.')
-      return
-    }
-
-    const newSession = {
-      student: student,
-      date: date,
-      hours: hours
-    }
-
+    setIsSaving(true)
     try {
-      const {data, error} = await supabase
-        .from('sessions')
-        .insert([newSession])
-        .select()
+      const { data, error } = await supabase.from('sessions').insert({
+        student_id: studentId,
+        date,
+        hours: numericHours
+      }).select(sessionFields).single()
+      if (error || !data) throw error || new Error('Missing saved session')
 
-      if (error || !data?.[0]) {
-        alert('Could not confirm the saved session. Your entries have been kept. Refresh to check before trying again.')
-        return
-      }
-
-      setSessions((currentSessions) => [...currentSessions, data[0]])
-      setStudent('')
+      setSessions((currentSessions) => [...currentSessions, data])
+      setStudentId('')
       setDate('')
       setHours('')
+      setSessionMessage({ type: 'success', text: 'Session saved. The monthly report updates when the session matches your selected period.' })
     } catch {
-      alert('Could not confirm the saved session. Your entries have been kept. Refresh to check before trying again.')
+      setSessionMessage({ type: 'error', text: 'Could not confirm the saved session. Your entries are kept. Refresh to check before retrying.' })
+    } finally {
+      setIsSaving(false)
     }
   }
 
-  // Exclude incomplete or invalid records so the report stays usable.
-  const validSessions = sessions.filter((session) => {
-    if (!session || !/^\d{4}-\d{2}-\d{2}$/.test(session.date)) {
-      return false
-    }
-
-    const parsedDate = new Date(`${session.date}T00:00:00Z`)
-    const validDate = !Number.isNaN(parsedDate.getTime()) &&
-      parsedDate.toISOString().slice(0, 10) === session.date
-    const validHours = session.hours !== null &&
-      String(session.hours).trim() !== '' &&
-      Number.isFinite(Number(session.hours)) && Number(session.hours) >= 0
-
-    return validDate && validHours
-  })
+  const validSessions = sessions.filter(isValidSession)
 
   const filteredSessions = validSessions.filter((session) => {
     // Dates are stored as YYYY-MM-DD, so no timezone conversion is needed.
@@ -104,105 +105,116 @@ function App() {
     validSessions.map((session) => session.date.split('-')[0])
   )].sort()
 
+  const periodLabel = `${selectedMonth ? months[Number(selectedMonth) - 1] : 'All months'} · ${selectedYear || 'All years'}`
+  const studentSummary = students.map((student) => {
+    const studentSessions = filteredSessions.filter((session) => session.student_id === student.id)
+    return {
+      ...student,
+      sessionCount: studentSessions.length,
+      hours: studentSessions.reduce((total, session) => total + Number(session.hours), 0)
+    }
+  }).filter((student) => student.sessionCount > 0)
+  const formsDisabled = isLoading || Boolean(loadError) || students.length === 0
+
   return (
-    <div>
-      <h1>Tutor Session Reporting</h1>
-      <p>Record and manage monthly tutoring sessions.</p>
-    
-      <div>
-        <h2>Record a Session</h2>
-      </div>
-      <div> 
-        <h2>Session History</h2>
-        <label htmlFor="report-month">View Month</label>
-        <select
-          id="report-month"
-          value={selectedMonth}
-          onChange={(event) => setSelectedMonth(event.target.value)}
-        >
-          <option value="">All Months</option>
-          <option value="01">January</option>
-          <option value="02">February</option>
-          <option value="03">March</option>
-          <option value="04">April</option>
-          <option value="05">May</option>
-          <option value="06">June</option>
-          <option value="07">July</option>
-          <option value="08">August</option>
-          <option value="09">September</option>
-          <option value="10">October</option>
-          <option value="11">November</option>
-          <option value="12">December</option>
-        </select>
+    <main className="app-shell">
+      <header className="page-header">
+        <p className="eyebrow">Literacy tutoring · Sample-data prototype</p>
+        <h1>Tutor Session Reporting</h1>
+        <p>Track tutoring time and celebrate student achievements.</p>
+        <p className="prototype-note">Use fictional students and sample information only.</p>
+      </header>
 
-        <label htmlFor="report-year">View Year</label>
-        <select
-          id="report-year"
-          value={selectedYear}
-          onChange={(event) => setSelectedYear(event.target.value)}
-        >
-          <option value="">All Years</option>
-          {availableYears.map((year) => (
-            <option key={year} value={year}>{year}</option>
-          ))}
-        </select>
+      {isLoading && <p className="message" role="status">Loading reporting data…</p>}
+      {loadError && <p className="message error" role="alert">{loadError}</p>}
+      {!isLoading && !loadError && students.length === 0 && (
+        <p className="message">No students added yet. Use Add New Student below to get started.</p>
+      )}
 
-        {isLoading && <p>Loading sessions...</p>}
-        {loadError && <p role="alert">{loadError}</p>}
+      <AddStudent students={students} setStudents={setStudents} disabled={isLoading || Boolean(loadError)} />
 
+      <section className="card" aria-labelledby="report-heading">
+        <div className="section-heading">
+          <div><p className="eyebrow">Dashboard</p><h2 id="report-heading">Monthly Report</h2></div>
+          <p className="period-label">{periodLabel}</p>
+        </div>
+        <div className="filter-row">
+          <div>
+            <label htmlFor="report-month">View month</label>
+            <select id="report-month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)}>
+              <option value="">All Months</option>
+              {months.map((month, index) => (
+                <option key={month} value={String(index + 1).padStart(2, '0')}>{month}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="report-year">View year</label>
+            <select id="report-year" value={selectedYear} onChange={(event) => setSelectedYear(event.target.value)}>
+              <option value="">All Years</option>
+              {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
+          </div>
+        </div>
         {!isLoading && !loadError && (
           <>
-            {validSessions.length < sessions.length && (
-              <p>Some sessions have invalid dates or hours and are excluded from this report.</p>
+            {validSessions.length < sessions.length && <p className="message">Some sessions have invalid dates or hours and are excluded from this report.</p>}
+            <div className="report-totals">
+              <div><strong>{Number(totalHours.toFixed(2))}</strong><span>Total tutoring hours</span></div>
+              <div><strong>{filteredSessions.length}</strong><span>Sessions in selected period</span></div>
+            </div>
+            {studentSummary.length > 0 && (
+              <div className="student-summary">
+                <h3>Hours by student</h3>
+                <ul>{studentSummary.map((student) => <li key={student.id}>{student.name} <strong>{Number(student.hours.toFixed(2))} hours</strong></li>)}</ul>
+              </div>
             )}
-
-            <p>Total tutoring hours for selected period: {totalHours}</p>
-
-            {filteredSessions.length === 0 && (
-              <p>No valid sessions found for the selected period. Try another month or year, or record a session.</p>
-            )}
-
-            {filteredSessions.map((session) => (
-              <p key={session.id}>
-                {session.student} - {session.date} - {session.hours} hours
-              </p>
-            ))}
+            <div className="history-section">
+              <h3>Session History</h3>
+              {filteredSessions.length === 0 ? (
+                <p className="empty-state">No sessions found for {periodLabel.toLowerCase()}. Try another period or record a session.</p>
+              ) : (
+                <ul className="record-list">
+                  {[...filteredSessions].sort((a, b) => b.date.localeCompare(a.date)).map((session) => (
+                    <li key={session.id} className="session-record">
+                      <div><strong>{session.learner?.name || 'Student unavailable'}</strong><time dateTime={session.date}>{session.date}</time></div>
+                      <span>{session.hours} hours</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </>
         )}
+      </section>
+
+      <div className="forms-grid">
+        <section className="card" aria-labelledby="session-heading">
+          <h2 id="session-heading">Record Session</h2>
+          <p className="section-description">Add a student's tutoring attendance and time.</p>
+          <form onSubmit={recordSession}>
+            <fieldset disabled={formsDisabled || isSaving}>
+              <legend className="sr-only">Session details</legend>
+              <label htmlFor="session-student">Student</label>
+              <select id="session-student" value={studentId} required onChange={(event) => setStudentId(event.target.value)}>
+                <option value="">{students.length === 0 ? 'No students added yet' : 'Select a student'}</option>
+                {students.map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}
+              </select>
+              <label htmlFor="session-date">Session date</label>
+              <input id="session-date" type="date" value={date} required onChange={(event) => setDate(event.target.value)} />
+              <label htmlFor="session-hours">Tutoring hours</label>
+              <input id="session-hours" type="number" step="0.25" min="0.25" value={hours} required
+                aria-describedby="hours-help" onChange={(event) => setHours(event.target.value)} />
+              <p id="hours-help" className="field-help">Enter time in quarter-hour increments, such as 1.25.</p>
+              <button type="submit">{isSaving ? 'Saving…' : 'Save session'}</button>
+            </fieldset>
+          </form>
+          {sessionMessage && <p className={`message ${sessionMessage.type}`} role={sessionMessage.type === 'error' ? 'alert' : 'status'}>{sessionMessage.text}</p>}
+        </section>
+        <Achievements students={students} achievements={achievements} setAchievements={setAchievements} disabled={formsDisabled} />
       </div>
-      <label>Student</label>
-
-      <select
-        value={student}
-        onChange={(event) => setStudent(event.target.value)}
-      >
-        <option value="">Select a student</option>
-        <option>Alex Johnson</option>
-        <option>Maya Patel</option>
-        <option>Jordan Smith</option>
-      </select>
-
-    <p>You selected: {student}</p>
-
-      <label>Date</label>
-      <input 
-        type="date" 
-        value={date}
-        onChange={(event) => setDate(event.target.value)}
-      />
-
-      <label>Hours</label>
-      <input 
-        type="number" 
-        step="0.25" 
-        min="0" 
-        value={hours}
-        onChange={(event) => setHours(event.target.value)}
-      />
-
-      <button onClick={recordSession}>Record Session</button>
-
-    </div>
+      <footer>Sample-data prototype · Attendance and achievements are recorded separately.</footer>
+    </main>
   )
 }
 
