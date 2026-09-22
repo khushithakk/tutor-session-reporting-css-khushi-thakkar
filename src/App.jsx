@@ -9,7 +9,7 @@ const months = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December']
 
 // Read the name through the foreign key, never from the legacy student column.
-const sessionFields = 'id, student_id, date, hours, learner:students!student_id(id, name)'
+const sessionFields = 'id, student_id, tutor_id, date, hours, learner:students!student_id(id, name)'
 
 function App() {
   const[studentId, setStudentId] = useState('')
@@ -21,6 +21,9 @@ function App() {
   const[isLoading, setIsLoading] = useState(true)
   const[loadError, setLoadError] = useState('')
 
+  const [tutors, setTutors] = useState([])
+  const [activeTutorId, setActiveTutorId] = useState('')
+  const [isAchievementSaving, setIsAchievementSaving] = useState(false)
   const [students, setStudents] = useState([])
   const [achievements, setAchievements] = useState([])
   const [isSaving, setIsSaving] = useState(false)
@@ -30,6 +33,8 @@ function App() {
     let cancelled = false
     async function fetchSessions() {
       try {
+        const tutorResult = await supabase.from('tutors').select('id, name').order('name')
+        if (tutorResult.error) throw tutorResult.error
         const studentResult = await supabase.from('students').select('*').order('name')
         if (studentResult.error) throw studentResult.error
         const sessionResult = await supabase.from('sessions').select(sessionFields).order('date', { ascending: false })
@@ -38,6 +43,7 @@ function App() {
         if (achievementResult.error) throw achievementResult.error
 
         if (!cancelled) {
+          setTutors(tutorResult.data ?? [])
           setStudents(studentResult.data ?? [])
           setSessions(sessionResult.data ?? [])
           setAchievements(achievementResult.data ?? [])
@@ -59,6 +65,11 @@ function App() {
     setSessionMessage(null)
     const numericHours = Number(hours)
 
+    if (!tutors.some((tutor) => tutor.id === activeTutorId)) {
+      setSessionMessage({ type: 'error', text: 'Select an active tutor before saving a session.' })
+      return
+    }
+
     if (!students.some((student) => student.id === studentId) || !isValidDate(date) ||
         !hours.trim() || !Number.isFinite(numericHours) || numericHours <= 0) {
       setSessionMessage({ type: 'error', text: 'Select a student, enter a valid date, and enter hours greater than zero.' })
@@ -69,6 +80,7 @@ function App() {
     try {
       const { data, error } = await supabase.from('sessions').insert({
         student_id: studentId,
+        tutor_id: activeTutorId,
         date,
         hours: numericHours
       }).select(sessionFields).single()
@@ -101,9 +113,10 @@ function App() {
     return total + Number(session.hours)
   }, 0)
 
-  const availableYears = [...new Set(
-    validSessions.map((session) => session.date.split('-')[0])
-  )].sort()
+  const availableYears = [...new Set([
+    '2025', '2026', '2027',
+    ...validSessions.map((session) => session.date.split('-')[0])
+  ])].sort()
 
   const periodLabel = `${selectedMonth ? months[Number(selectedMonth) - 1] : 'All months'} · ${selectedYear || 'All years'}`
   const studentSummary = students.map((student) => {
@@ -114,7 +127,8 @@ function App() {
       hours: studentSessions.reduce((total, session) => total + Number(session.hours), 0)
     }
   }).filter((student) => student.sessionCount > 0)
-  const formsDisabled = isLoading || Boolean(loadError) || students.length === 0
+  const activeTutor = tutors.find((tutor) => tutor.id === activeTutorId)
+  const formsDisabled = isLoading || Boolean(loadError) || students.length === 0 || !activeTutor
 
   return (
     <main className="app-shell">
@@ -131,11 +145,31 @@ function App() {
         <p className="message">No students added yet. Use Add New Student below to get started.</p>
       )}
 
+      <section className="card" aria-labelledby="tutor-heading">
+        <h2 id="tutor-heading">Active Tutor</h2>
+        <p className="section-description">Choose who is recording new sessions and achievements. Reports and student histories include all tutors.</p>
+        <label htmlFor="active-tutor">Tutor</label>
+        <select id="active-tutor" value={activeTutorId}
+          disabled={isLoading || Boolean(loadError) || isSaving || isAchievementSaving}
+          onChange={(event) => {
+            setActiveTutorId(event.target.value)
+            setSessionMessage(null)
+          }}>
+          <option value="">{tutors.length === 0 ? 'No tutors available' : 'Select an active tutor'}</option>
+          {tutors.map((tutor) => <option key={tutor.id} value={tutor.id}>{tutor.name}</option>)}
+        </select>
+        {!isLoading && !loadError && tutors.length === 0 && (
+          <p className="empty-state">Add fictional tutor records in Supabase, then refresh. Existing reports remain available.</p>
+        )}
+        {tutors.length > 0 && !activeTutor && <p className="field-help">Select a tutor to enable session and achievement recording.</p>}
+        <p className="field-help">This prototype selector does not sign you in or restrict access.</p>
+      </section>
+
       <AddStudent students={students} setStudents={setStudents} disabled={isLoading || Boolean(loadError)} />
 
       <section className="card" aria-labelledby="report-heading">
         <div className="section-heading">
-          <div><p className="eyebrow">Dashboard</p><h2 id="report-heading">Monthly Report</h2></div>
+          <div><p className="eyebrow">Dashboard · All tutors</p><h2 id="report-heading">Monthly Report</h2></div>
           <p className="period-label">{periodLabel}</p>
         </div>
         <div className="filter-row">
@@ -178,7 +212,9 @@ function App() {
                   {[...filteredSessions].sort((a, b) => b.date.localeCompare(a.date)).map((session) => (
                     <li key={session.id} className="session-record">
                       <div><strong>{session.learner?.name || 'Student unavailable'}</strong><time dateTime={session.date}>{session.date}</time></div>
-                      <span>{session.hours} hours</span>
+                      <div><span>{session.hours} hours</span><p className="field-help">Tutor: {session.tutor_id
+                        ? tutors.find((tutor) => tutor.id === session.tutor_id)?.name || 'Tutor unavailable'
+                        : 'Not assigned'}</p></div>
                     </li>
                   ))}
                 </ul>
@@ -191,7 +227,7 @@ function App() {
       <div className="forms-grid">
         <section className="card" aria-labelledby="session-heading">
           <h2 id="session-heading">Record Session</h2>
-          <p className="section-description">Add a student's tutoring attendance and time.</p>
+          <p className="section-description">Add a student's tutoring attendance and time.{activeTutor ? ` Recording as ${activeTutor.name}.` : ''}</p>
           <form onSubmit={recordSession}>
             <fieldset disabled={formsDisabled || isSaving}>
               <legend className="sr-only">Session details</legend>
@@ -211,7 +247,8 @@ function App() {
           </form>
           {sessionMessage && <p className={`message ${sessionMessage.type}`} role={sessionMessage.type === 'error' ? 'alert' : 'status'}>{sessionMessage.text}</p>}
         </section>
-        <Achievements students={students} achievements={achievements} setAchievements={setAchievements} disabled={formsDisabled} />
+        <Achievements students={students} achievements={achievements} setAchievements={setAchievements}
+          tutors={tutors} activeTutor={activeTutor} setIsAchievementSaving={setIsAchievementSaving} disabled={formsDisabled} />
       </div>
       <footer>Sample-data prototype · Attendance and achievements are recorded separately.</footer>
     </main>

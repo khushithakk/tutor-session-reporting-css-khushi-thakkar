@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { supabase } from './supabaseClient'
 import { achievementGroups, isValidDate, normalizeText } from './reporting'
 
-function Achievements({ students, achievements, setAchievements, disabled }) {
+function Achievements({ students, achievements, setAchievements, tutors, activeTutor, setIsAchievementSaving, disabled }) {
   const [studentId, setStudentId] = useState('')
   const [selectedGoals, setSelectedGoals] = useState([])
   const [otherGoal, setOtherGoal] = useState('')
@@ -29,8 +29,8 @@ function Achievements({ students, achievements, setAchievements, disabled }) {
     if (isSaving || disabled) return
     setMessage(null)
 
-    if (!selectedStudent || !isValidDate(date)) {
-      setMessage({ type: 'error', text: 'Choose a student and provide a valid date attained.' })
+    if (!activeTutor || !selectedStudent || !isValidDate(date)) {
+      setMessage({ type: 'error', text: 'Choose an active tutor, a student, and a valid date attained.' })
       return
     }
 
@@ -38,7 +38,7 @@ function Achievements({ students, achievements, setAchievements, disabled }) {
     for (const group of achievementGroups) {
       for (const goal of group.goals) {
         if (selectedGoals.includes(goal) && !alreadyAchieved(group.category, goal)) {
-          records.push({ student_id: studentId, category: group.category, goal, achieved_at: date })
+          records.push({ student_id: studentId, tutor_id: activeTutor.id, category: group.category, goal, achieved_at: date })
         }
       }
     }
@@ -47,7 +47,7 @@ function Achievements({ students, achievements, setAchievements, disabled }) {
         setMessage({ type: 'error', text: 'This Other achievement is already recorded. Clear or change it before saving.' })
         return
       }
-      records.push({ student_id: studentId, category: 'Other', goal: otherGoal.trim(), achieved_at: date })
+      records.push({ student_id: studentId, tutor_id: activeTutor.id, category: 'Other', goal: otherGoal.trim(), achieved_at: date })
     }
     if (records.length === 0) {
       setMessage({ type: 'error', text: 'Check at least one new achievement or enter an Other achievement.' })
@@ -55,6 +55,7 @@ function Achievements({ students, achievements, setAchievements, disabled }) {
     }
 
     setIsSaving(true)
+    setIsAchievementSaving(true)
     try {
       // One insert saves the entire batch together; a database error rejects it all.
       const { data, error } = await supabase.from('achievements').insert(records).select()
@@ -70,13 +71,14 @@ function Achievements({ students, achievements, setAchievements, disabled }) {
         : 'Could not confirm the saved achievements. Your selections are kept. Refresh to check before retrying.' })
     } finally {
       setIsSaving(false)
+      setIsAchievementSaving(false)
     }
   }
 
   return (
     <section className="card" aria-labelledby="achievement-heading">
       <h2 id="achievement-heading">Record Achievements</h2>
-      <p className="section-description">Check each goal when attained. Labels and asterisks follow the LVAEP form.</p>
+      <p className="section-description">Check each goal when attained. Labels and asterisks follow the LVAEP form.{activeTutor ? ` Recording as ${activeTutor.name}.` : ''}</p>
       <form onSubmit={recordAchievements}>
         <fieldset disabled={disabled || isSaving}>
           <legend className="sr-only">Achievement details</legend>
@@ -128,6 +130,9 @@ function Achievements({ students, achievements, setAchievements, disabled }) {
                 <li key={achievement.id}>
                   <div className="record-heading"><strong>{achievement.category === 'Other' ? 'Other(s)' : achievement.category}</strong><time dateTime={achievement.achieved_at}>{achievement.achieved_at}</time></div>
                   <p>{achievement.goal}</p>
+                  <p className="field-help">Recorded by: {achievement.tutor_id
+                    ? tutors.find((tutor) => tutor.id === achievement.tutor_id)?.name || 'Tutor unavailable'
+                    : 'Not assigned'}</p>
                 </li>
               ))}
             </ul>

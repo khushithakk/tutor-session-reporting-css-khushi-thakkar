@@ -107,3 +107,24 @@ For Vercel, select the **Vite** framework preset, use `npm run build`, and set t
 ## Future improvements
 
 Authentication and role-based access, student edit/delete workflows, exports, pagination/server-side reports, stronger auditing, and duplicate-safe save requests.
+
+## Multiple tutors (migration 003)
+
+After migrations 001 and 002, run `supabase/migrations/003_tutor_attribution.sql` once in Supabase SQL Editor. This migration has not been run remotely by the app update. Do not rerun earlier migrations. Existing student, session, and achievement records are preserved.
+
+The migration creates `tutors` (`id`, `name`, nullable unique `auth_user_id`, `created_at`) and adds nullable `tutor_id` foreign keys to sessions and achievements. Historical rows retain NULL attribution and display “Not assigned.” No tutor is guessed or backfilled. The achievement uniqueness rule remains per student/category/goal, across all tutors.
+
+Add fictional tutors through Supabase Table Editor (supply `name`, leave the generated ID/default timestamp and nullable `auth_user_id` alone), then refresh. Alternatively, the migration file includes a commented example INSERT to run separately. No tutor-management UI or anonymous tutor-insert permission is added.
+
+Choose an active tutor before recording sessions or achievements. Selection applies to new records only, resets on page refresh, and is disabled while a session/achievement save is in progress. Switching tutors keeps student and goal selections; the form explicitly names the tutor who will receive credit. Students remain shared. Monthly reports and student achievement histories continue to show all tutors, including unassigned historical records; selecting a tutor does not change totals. History now displays tutor attribution.
+
+Anonymous clients may read only tutor IDs/names and must supply a tutor ID for new session/achievement inserts. Foreign keys require that tutor to exist. This is attribution, **not authentication**: visitors can select any tutor and read existing prototype records. Deploy the matching frontend after migration because the old frontend does not send tutor IDs. `.env` and publishable-key usage are unchanged.
+
+For future Supabase Auth, populate each tutor’s `auth_user_id` with the matching `auth.users.id`, derive the active tutor from the signed-in user, and replace anonymous policies with authenticated, role-based RLS. The session/achievement foreign keys can stay as they are. Auth is not implemented by this migration.
+
+Tutor testing checklist:
+- Add two fictional tutors and select each in turn; save a session and achievement for each, then refresh to verify attribution.
+- Confirm a tutor must be selected for new activity, while adding students and viewing reports still work without one.
+- Confirm switching tutors leaves monthly totals unchanged and old records remain visible as “Not assigned.”
+- Confirm a goal recorded by one tutor remains attained for that student when another tutor is selected.
+- Confirm tutor selection is disabled during saves and errors preserve form entries.
